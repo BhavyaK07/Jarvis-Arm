@@ -12,13 +12,12 @@ from openwakeword.model import Model
 import time
 from ultralytics import YOLO
 from kinematics import px_to_table_landscape, calculate_arm_angles, load_calibration
-from faster_whisper import WhisperModel
 import subprocess
 import webrtcvad
 
 #elevenlabs api = https://elevenlabs.io/app/developers/analytics/usage
 from elevenlabs.client import ElevenLabs
-from elevenlabs.play import play
+from elevenlabs import stream
 
 #gemini api = https://aistudio.google.com/api-keys
 #from google import genai
@@ -90,12 +89,12 @@ def listen_for_wake_word():
                 return
 
 #Groq Prompt
-CONVERSATION_PROMPT = """
-You are hood Jarvis, an AI assistant with a toronto mans slang, controlling a robotic arm. Your personality is
+CONVERSATION_PROMPT = f"""
+You are Jarvis, an AI assistant, controlling a robotic arm. Your personality is
 modelled after TARS from Interstellar — dry wit, playful sarcasm, and occasional
 dark humour, but always competent and helpful when it matters.
 
-You have a humour setting of {humour}percent. Act accordingly.
+You have a humour setting of {humour}% percent. Act accordingly.
 
 You are able to have a continuous conversation — reply back with follow-up questions occasionally when you see fit.
 Remember context from earlier in the conversation and build on it naturally.
@@ -140,8 +139,6 @@ Response format:
 Safety rule: confidence below 0.5 must use action unknown.
 """
 
-whisper_model=WhisperModel("base", device="cpu",compute_type="int8")  # Load Whisper model for speech recognition
-
 AI_voice = ElevenLabs(api_key=ELEVENLAB_API_KEY)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
@@ -171,14 +168,14 @@ def convo_message(transcript):
 def speak(text):
     print(f"Jarvis says: {text}")
     try:
-        audio = AI_voice.text_to_speech.convert(
+        audio = AI_voice.text_to_speech.convert_as_stream(
             text=text,
             voice_id="pNInz6obpgDQGcFmaJgB",
             model_id="eleven_flash_v2_5"
+            output_format="mp3_44100_128"
         )
 
-        play(audio)
-        time.sleep(0.1)
+        stream(audio)
 
     except Exception as e:
         print(f"ElevenLabs error: {e}")
@@ -289,9 +286,15 @@ def transcribe_audio(audio, fs=sample_rate):
         tmp_path = tmp.name
         wav.write(tmp_path, fs, (audio * 32767).astype(np.int16))
 
-    segments,_ = whisper_model.transcribe(tmp_path,beam_size=1)
+    with open(tmp_path, "rb") as f:
+       transcription = groq_client.speech.transcribe(
+            model="whisper-1",
+            audio=f,
+            language="en"
+        )
+    
     os.remove(tmp_path)
-    return " ".join([s.text for s in segments]).strip()
+    return transcription.text.strip()
 
 
 def get_command(transcription, image_b64=None,detected_objects=None, gemini_instance=None):
