@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis-arm"
+version = "0.1.0"
+description = "Voice-controlled SO-101 robotic arm with open-vocabulary grounding and a skill-based task agent"
+requires-python = ">=3.11"
+# Core = enough to run the mock arm in --text --offline mode and the test suite.
+dependencies = [
+    "numpy>=1.26",
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+voice = [
+    "sounddevice>=0.4.6",
+    "webrtcvad-wheels>=2.0.14",   # maintained fork of webrtcvad with prebuilt wheels
+    "openwakeword>=0.6.0",
+    "onnxruntime>=1.17",
+    "groq>=0.11",
+    "elevenlabs>=2.0",
+]
+vision = [
+    "opencv-python-headless>=4.9",
+    "google-genai>=1.0",
+]
+hw = [
+    "pyserial>=3.5",
+    "feetech-servo-sdk>=1.0",     # scservo_sdk; used by drivers/servo_bus.py
+]
+dev = [
+    "pytest>=8",
+]
+all = ["jarvis-arm[voice,vision,hw,dev]"]
+
+[project.scripts]
+jarvis = "jarvis_arm.main:main"
+
+[tool.setuptools.packages.find]
+include = ["jarvis_arm*"]
+
+[tool.setuptools.package-data]
+jarvis_arm = ["config.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
