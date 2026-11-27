@@ -31,7 +31,7 @@ def register(reg: SkillRegistry) -> None:
         if obj.status not in ("on_table", "placed"):
             return SkillResult(False, f"{obj.id} is {obj.status}; rescan")
         if not ctx.simulated:
-            return SkillResult(False, "pick not implemented on hardware yet (needs IK + calibration)")
+            return SkillResult(False, "pick not implemented on this backend yet (needs IK); works in --offline mock mode")
 
         r = ctx.controller.set_gripper(ctx.cfg.gripper.open_deg)
         if not r.ok:

@@ -32,10 +32,14 @@ hw = [
     "pyserial>=3.5",
     "feetech-servo-sdk>=1.0",     # scservo_sdk; used by drivers/servo_bus.py
 ]
+sim = [
+    "mujoco>=3.2",
+    "opencv-python-headless>=4.9",
+]
 dev = [
     "pytest>=8",
 ]
-all = ["jarvis-arm[voice,vision,hw,dev]"]
+all = ["jarvis-arm[voice,vision,hw,sim,dev]"]
 
 [project.scripts]
 jarvis = "jarvis_arm.main:main"

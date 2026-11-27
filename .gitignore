@@ -9,3 +9,4 @@ logs/
 calib/*.local.*
 *.egg-info/
 .pytest_cache/
+third_party/

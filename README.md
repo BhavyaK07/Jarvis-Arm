@@ -15,8 +15,23 @@ python -m jarvis_arm --text --offline        # mock arm, typed input, rule-based
 pytest
 ```
 
+Grounding on your own photos (needs `.[vision]` and `GEMINI_API_KEY`):
+
+```bash
+python -m jarvis_arm.tools.ground_demo photos/ -q "red cup" -q "bowl"   # annotated copies -> logs/grounding_demo/
+```
+
 Try: `what do you see`, `put the red cup in the bowl`, `pick up the green block`,
 `stop`, `resume`, `go home`, `quit`.
+
+## Simulator
+
+```bash
+pip install -e '.[sim]' && python -m jarvis_arm.tools.fetch_so101_model
+python -m jarvis_arm --sim --text --offline         # whole robot on MuJoCo physics
+```
+
+See [docs/sim_guide.md](docs/sim_guide.md) for how it works and exercises.
 
 ## With cloud APIs / voice
 
@@ -59,8 +74,10 @@ The LLMs never output joint angles or coordinates. Every skill returns a structu
 | Mock arm / camera / ToF / world, controller, safety, scene, skill registry, task runner | working, tested |
 | Voice front-end (wake word, VAD, Groq Whisper), Groq chat with `do_task`, TTS chain | ported, smoke-tested |
 | `ScriptedAgent` (offline, rule-based) | working on mocks |
-| `GeminiGrounder` (step 4), `GeminiAgent` (step 5) | stubs |
+| `GeminiGrounder` (step 4): Robotics-ER 2 points/boxes, retries, per-call logs; `tools/ground_demo.py` | working, tested on synthetic images; real desk photos pending |
+| `GeminiAgent` (step 5) | stub |
 | `FeetechServoBus` | written from the STS3215 control table, **untested on hardware** |
+| MuJoCo sim backend (`--sim`): physics servo bus, rendered wrist camera, ToF ray, ground-truth grounder; see [docs/sim_guide.md](docs/sim_guide.md) | working, tested |
 | SO-101 FK/IK, camera calibration, tracker, VL53L1X driver | TODO |
 
 ## Config

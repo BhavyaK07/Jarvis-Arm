@@ -1,7 +1,7 @@
 # Jarvis-Arm runtime configuration.
 # Secrets (API keys) live in .env, never here. See .env.example.
 
-mode: mock            # mock | hardware   (CLI --hardware overrides)
+mode: mock            # mock | sim | hardware   (CLI --sim / --hardware override)
 
 logging:
   level: INFO
@@ -42,6 +42,20 @@ agent:
   max_calls: 15
   max_retries_per_step: 2
 
+# Open-vocabulary grounding (perception/grounding.py). ER 2 is only reachable
+# through the Interactions API on v1beta (generateContent on v1 returns 404).
+grounding:
+  model: gemini-robotics-er-2-preview
+  api_version: v1beta
+  thinking_level: low        # minimal | low | medium | high; ~1.8 s at minimal/low on a simple scene
+  temperature: 0.5
+  max_items: 10
+  max_side_px: 1280          # frames are downscaled to this before upload
+  jpeg_quality: 85
+  timeout_s: 20
+  retries: 1                 # extra attempts on 429/5xx/timeouts
+  log_images: true           # save the exact uploaded frame + annotated copy per call
+
 camera:
   index: 0
   width: 1280
@@ -53,27 +67,33 @@ servo_bus:
   control_hz: 50
   telemetry_hz: 5
   max_load_pct: 80           # sustained load above this -> halt
+  overload_hold_s: 0.6       # ...for this long (accel spikes hit 100% briefly; found in sim)
   max_temp_c: 60
   default_speed_dps: 60      # deg/s
 
 # SO-101 joint map. offset_ticks = raw tick at joint angle 0; sign = +1/-1.
-# Limits are in joint degrees AFTER offset/sign. Fill in during bring-up.
+# Joint angles follow the SO-101 MuJoCo model ("new calibration": 0 = middle of
+# each joint's range; +X forward, +pan turns toward -Y). Real-arm calibration
+# (tools/joint_calib, TODO) fills offset_ticks/sign so the real arm MATCHES the sim.
+# Limits are in joint degrees and sit at/inside the MJCF ranges.
 joints:
   - {name: shoulder_pan,  id: 1, offset_ticks: 2048, sign: 1,  min_deg: -110, max_deg: 110}
   - {name: shoulder_lift, id: 2, offset_ticks: 2048, sign: 1,  min_deg: -100, max_deg: 100}
-  - {name: elbow_flex,    id: 3, offset_ticks: 2048, sign: 1,  min_deg: -100, max_deg: 100}
-  - {name: wrist_flex,    id: 4, offset_ticks: 2048, sign: 1,  min_deg: -100, max_deg: 100}
-  - {name: wrist_roll,    id: 5, offset_ticks: 2048, sign: 1,  min_deg: -160, max_deg: 160}
-  - {name: gripper,       id: 6, offset_ticks: 2048, sign: 1,  min_deg: 0,    max_deg: 100}
+  - {name: elbow_flex,    id: 3, offset_ticks: 2048, sign: 1,  min_deg: -96,  max_deg: 96}
+  - {name: wrist_flex,    id: 4, offset_ticks: 2048, sign: 1,  min_deg: -95,  max_deg: 95}
+  - {name: wrist_roll,    id: 5, offset_ticks: 2048, sign: 1,  min_deg: -157, max_deg: 162}
+  - {name: gripper,       id: 6, offset_ticks: 2048, sign: 1,  min_deg: -10,  max_deg: 100}
 
 gripper:
   open_deg: 90
   closed_deg: 0
 
 # Named poses in joint degrees (order = joints above, excluding gripper).
+# Chosen in the SO-101 sim: home = folded, collision-free, clear of the workspace;
+# scan = wrist camera ~20 cm up, tilted 25 deg, looking at (0.22, 0.0).
 named_poses:
-  home: [0, -90, 90, 0, 0]
-  scan: [0, -40, 60, 70, 0]
+  home: [0, -80, 60, 90, 0]
+  scan: [0, -25, 5, 85, 90]
 
 # Named drop-off spots on the table, base frame metres [x, y]. +y = robot's left.
 locations:
@@ -86,3 +106,16 @@ workspace:
   min_radius_m: 0.08
   max_radius_m: 0.38
   min_z_m: 0.005
+
+# MuJoCo simulator (python -m jarvis_arm --sim). Model: python -m jarvis_arm.tools.fetch_so101_model
+sim:
+  model_path: third_party/so101_mjcf/so101_new_calib_camera.xml
+  render_width: 640
+  render_height: 480
+  fps: 10
+  camera_fovy_deg: 70        # vertical FOV; ~100 deg diagonal, like a wide 32x32 module
+  realtime: true
+  objects:                   # size: box = half-extents; cylinder = [radius, half_height]; sphere = [radius]
+    - {label: red cup,     shape: cylinder, size: [0.025, 0.04],         pos: [0.20, 0.07],  rgba: [0.85, 0.12, 0.10, 1], mass: 0.04}
+    - {label: blue bowl,   shape: cylinder, size: [0.055, 0.02],         pos: [0.27, -0.07], rgba: [0.10, 0.30, 0.85, 1], mass: 0.08}
+    - {label: green block, shape: box,      size: [0.015, 0.015, 0.015], pos: [0.17, -0.05], rgba: [0.15, 0.70, 0.20, 1], mass: 0.02}

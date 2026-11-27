@@ -46,6 +46,7 @@ class ArmController:
         self._pos_deg: dict[str, float] = {}
         self._telemetry: dict[str, ServoTelemetry] = {}
         self._last_tick = 0.0
+        self._overload_since: dict[str, float] = {}
         self._thread: threading.Thread | None = None
 
     # ------------------------------------------------------------ lifecycle
@@ -220,8 +221,14 @@ class ArmController:
             self._telemetry = by_name
         self._update_positions({i: t.position for i, t in tel.items()})
         sb = self.cfg.servo_bus
+        now = time.monotonic()
         for name, t in by_name.items():
+            # Sustained overload only: brief spikes while accelerating are normal.
             if abs(t.load_pct) > sb.max_load_pct and name != "gripper":
-                self.halt(f"{name} overload {t.load_pct:.0f}%")
+                since = self._overload_since.setdefault(name, now)
+                if now - since >= sb.overload_hold_s:
+                    self.halt(f"{name} overload {t.load_pct:.0f}% for {now - since:.1f}s")
+            else:
+                self._overload_since.pop(name, None)
             if t.temp_c > sb.max_temp_c:
                 self.halt(f"{name} overtemp {t.temp_c:.0f}C")

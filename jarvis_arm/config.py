@@ -59,6 +59,19 @@ class AgentCfg(BaseModel):
     max_retries_per_step: int = Field(2, ge=0)
 
 
+class GroundingCfg(BaseModel):
+    model: str = "gemini-robotics-er-2-preview"
+    api_version: str = "v1beta"          # ER 2 is not served on v1
+    thinking_level: Literal["minimal", "low", "medium", "high"] = "low"
+    temperature: float = Field(0.5, ge=0, le=2)
+    max_items: int = Field(10, ge=1, le=25)
+    max_side_px: int = Field(1280, ge=256)   # downscale longer side before upload
+    jpeg_quality: int = Field(85, ge=30, le=100)
+    timeout_s: float = 20
+    retries: int = Field(1, ge=0)
+    log_images: bool = True
+
+
 class CameraCfg(BaseModel):
     index: int = 0
     width: int = 1280
@@ -71,6 +84,7 @@ class ServoBusCfg(BaseModel):
     control_hz: float = 50
     telemetry_hz: float = 5
     max_load_pct: float = 80
+    overload_hold_s: float = 0.6     # load must stay above max_load_pct this long to halt
     max_temp_c: float = 60
     default_speed_dps: float = 60
 
@@ -102,13 +116,45 @@ class WorkspaceCfg(BaseModel):
     min_z_m: float = 0.005
 
 
+class SimObjectCfg(BaseModel):
+    label: str
+    shape: Literal["box", "cylinder", "sphere"]
+    # box: half-extents [x, y, z]; cylinder: [radius, half_height]; sphere: [radius]
+    size: list[float]
+    pos: tuple[float, float]                    # table (x, y), base frame metres
+    rgba: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 1.0)
+    mass: float = Field(0.05, gt=0)
+
+    @model_validator(mode="after")
+    def _size(self) -> "SimObjectCfg":
+        need = {"box": 3, "cylinder": 2, "sphere": 1}[self.shape]
+        if len(self.size) != need or min(self.size) <= 0:
+            raise ValueError(f"{self.label}: {self.shape} needs {need} positive size values")
+        return self
+
+    @property
+    def half_height(self) -> float:
+        return self.size[2] if self.shape == "box" else self.size[1] if self.shape == "cylinder" else self.size[0]
+
+
+class SimCfg(BaseModel):
+    model_path: str = "third_party/so101_mjcf/so101_new_calib_camera.xml"
+    render_width: int = 640
+    render_height: int = 480
+    fps: float = 10
+    camera_fovy_deg: float = 70      # vertical FOV; ~100 deg diagonal at 4:3
+    realtime: bool = True
+    objects: list[SimObjectCfg] = []
+
+
 class Config(BaseModel):
-    mode: Literal["mock", "hardware"] = "mock"
+    mode: Literal["mock", "sim", "hardware"] = "mock"
     logging: LoggingCfg = LoggingCfg()
     voice: VoiceCfg = VoiceCfg()
     tts: TtsCfg = TtsCfg()
     chat: ChatCfg = ChatCfg()
     agent: AgentCfg = AgentCfg()
+    grounding: GroundingCfg = GroundingCfg()
     camera: CameraCfg = CameraCfg()
     servo_bus: ServoBusCfg = ServoBusCfg()
     joints: list[JointCfg]
@@ -116,6 +162,7 @@ class Config(BaseModel):
     named_poses: dict[str, list[float]] = {}
     locations: dict[str, tuple[float, float]] = {}
     workspace: WorkspaceCfg = WorkspaceCfg()
+    sim: SimCfg = SimCfg()
 
     @model_validator(mode="after")
     def _check(self) -> "Config":

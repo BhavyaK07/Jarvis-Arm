@@ -89,7 +89,7 @@ def test_controller_moves_and_halts(controller):
     r = controller.move_to_named("scan")
     assert r.ok, r.reason
     pos = controller.joint_positions()
-    assert pos["elbow_flex"] == pytest.approx(60, abs=2)
+    assert pos["elbow_flex"] == pytest.approx(controller.cfg.named_poses["scan"][2], abs=2)
     assert not controller.move_joints({"elbow_flex": 999}).ok   # refused
     controller.halt("test")
     r = controller.move_to_named("home")
@@ -113,5 +113,17 @@ def test_halt_mid_move_holds_position(cfg, controller):
 
 def test_overload_triggers_halt(controller, bus, cfg):
     bus.load_override[cfg.joints[1].id] = 95.0
-    time.sleep(0.5)
+    time.sleep(0.3)
+    assert not controller.halted                      # a brief spike is tolerated
+    time.sleep(cfg.servo_bus.overload_hold_s + 0.5)
     assert controller.halted and "overload" in controller.halt_reason
+
+
+def test_scene_merges_renamed_object_but_not_neighbours():
+    s = Scene()
+    a = s.observe("red block", 0.20, 0.00, 1.0)        # scan's name
+    b = s.observe("red circle", 0.205, 0.005, 1.0)     # find's name, same spot
+    assert a.id == b.id and a.aliases == ["red circle"]
+    bowl = s.observe("blue bowl", 0.25, -0.10, 1.0)
+    cup = s.observe("red cup", 0.25, -0.10, 1.0)        # cup placed in the bowl
+    assert cup.id != bowl.id

@@ -45,7 +45,7 @@ def register(reg: SkillRegistry) -> None:
         except SafetyViolation as e:
             return SkillResult(False, f"place refused: {e}")
         if not ctx.simulated:
-            return SkillResult(False, "place not implemented on hardware yet (needs IK)")
+            return SkillResult(False, "place not implemented on this backend yet (needs IK); works in --offline mock mode")
 
         # (simulated move above target + descend)
         ctx.sim_world.release(x, y)

@@ -20,6 +20,7 @@ class SceneObject:
     confidence: float
     last_seen: float = field(default_factory=time.time)
     status: Status = "on_table"
+    aliases: list[str] = field(default_factory=list)   # other names the model used
 
     def summary(self) -> dict:
         d = asdict(self)
@@ -29,9 +30,26 @@ class SceneObject:
         return d
 
 
+_FILLER = {"small", "large", "big", "little", "object", "item", "thing", "of", "the", "a"}
+
+
+def _words(label: str) -> set[str]:
+    return set(label.lower().split()) - _FILLER
+
+
+def labels_compatible(a: str, b: str) -> bool:
+    """Same object under two names? The grounding model names things
+    differently per query ("red block" on a scan, "red circle" when asked for
+    one), so share-a-word counts as compatible. Unrelated names ("red cup" vs
+    "blue bowl") stay separate even at the same spot (a cup placed in a bowl).
+    Known gap: "red cup" placed in a "red bowl" would merge."""
+    return a == b or bool(_words(a) & _words(b))
+
+
 class Scene:
-    """Thread-safe object list. Observations within `merge_radius_m` of an
-    existing object with the same label update it instead of adding a new one."""
+    """Thread-safe object list. An observation updates the nearest existing
+    object within `merge_radius_m` that has a compatible label; otherwise it
+    becomes a new object."""
 
     def __init__(self, merge_radius_m: float = 0.04):
         self._objs: dict[str, SceneObject] = {}
@@ -41,12 +59,19 @@ class Scene:
 
     def observe(self, label: str, x: float, y: float, confidence: float) -> SceneObject:
         with self._lock:
+            best, best_d = None, self.merge_radius_m
             for o in self._objs.values():
-                if o.label == label and o.status != "held" and \
-                        math.hypot(o.x - x, o.y - y) <= self.merge_radius_m:
-                    o.x, o.y, o.confidence, o.last_seen = x, y, confidence, time.time()
-                    o.status = "on_table" if o.status == "missing" else o.status
-                    return o
+                if o.status == "held" or not labels_compatible(o.label, label):
+                    continue
+                d = math.hypot(o.x - x, o.y - y)
+                if d <= best_d:
+                    best, best_d = o, d
+            if best is not None:
+                best.x, best.y, best.confidence, best.last_seen = x, y, confidence, time.time()
+                best.status = "on_table" if best.status == "missing" else best.status
+                if label != best.label and label not in best.aliases:
+                    best.aliases.append(label)
+                return best
             oid = f"obj{next(self._ids)}"
             o = SceneObject(oid, label, x, y, confidence)
             self._objs[oid] = o

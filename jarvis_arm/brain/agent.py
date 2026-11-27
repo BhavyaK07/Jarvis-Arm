@@ -106,6 +106,9 @@ class GeminiAgent:
     exactly the returned function call via `call`, append the structured
     SkillResult as the function response, repeat until the model answers in
     text (= done) or `call` raises TaskAborted (budget/cancel/halt).
+
+    ER 2 is only served via client.interactions.create on api_version v1beta
+    (see perception/grounding.py); use previous_interaction_id to chain turns.
     """
 
     def __init__(self, model: str, api_key: str | None):

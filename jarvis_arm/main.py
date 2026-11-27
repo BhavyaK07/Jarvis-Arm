@@ -48,6 +48,7 @@ class App:
     runner: TaskRunner
     scene: Scene
     voice: VoiceInput | None = None
+    sim: object | None = None          # SimWorld when cfg.mode == "sim"
 
 
 def setup_logging(cfg: Config, verbose: bool) -> None:
@@ -62,13 +63,15 @@ def setup_logging(cfg: Config, verbose: bool) -> None:
     root.handlers[:] = [fh, ch]
 
 
-def build_app(cfg: Config, *, text: bool, offline: bool, tts: bool = True) -> App:
-    """Construct and start everything. Mock vs hardware is cfg.mode."""
+def build_app(cfg: Config, *, text: bool, offline: bool, tts: bool = True,
+              gemini_vision: bool = False, viewer: bool = False) -> App:
+    """Construct and start everything. cfg.mode picks mock / sim / hardware drivers."""
     keys = {k: os.getenv(k) for k in ("GROQ_API_KEY", "GEMINI_API_KEY", "ELEVENLABS_API_KEY")}
     keys["ELEVENLABS_API_KEY"] = keys["ELEVENLABS_API_KEY"] or os.getenv("ELEVENLAB_API_KEY")  # legacy name
 
     # ---- drivers
-    sim_world = proj = None
+    sim_world = proj = world = None
+    pixel_to_table = None
     if cfg.mode == "mock":
         sim_world = MockWorld()
         proj = LinearProjection(cfg.camera.width, cfg.camera.height)
@@ -76,6 +79,18 @@ def build_app(cfg: Config, *, text: bool, offline: bool, tts: bool = True) -> Ap
         camera = MockCamera(cfg.camera.width, cfg.camera.height)
         tof = MockToF(sim_world)
         grounder = MockGrounder(sim_world, proj)
+        pixel_to_table = proj.to_table
+    elif cfg.mode == "sim":
+        from .drivers.sim import SimCamera, SimGrounder, SimServoBus, SimToF, SimWorld
+        world = SimWorld(cfg)
+        bus = SimServoBus(world, cfg)
+        camera = SimCamera(world)
+        tof = SimToF(world)
+        grounder = SimGrounder(world)
+        pixel_to_table = world.pixel_to_table      # exact camera pose from the sim
+        if viewer:
+            world.launch_viewer()
+        world.start()
     else:
         from .drivers.camera import OpenCVCamera
         from .drivers.servo_bus import FeetechServoBus
@@ -84,7 +99,12 @@ def build_app(cfg: Config, *, text: bool, offline: bool, tts: bool = True) -> Ap
         bus = FeetechServoBus(cfg.servo_bus.port, cfg.servo_bus.baudrate)
         camera = OpenCVCamera(cfg.camera.index, cfg.camera.width, cfg.camera.height)
         tof = VL53L1XToF()
-        grounder = GeminiGrounder(cfg.agent.model, keys["GEMINI_API_KEY"])
+        # pixel_to_table stays None until camera calibration + FK exist.
+
+    if gemini_vision or cfg.mode == "hardware":
+        from .perception.grounding import GeminiGrounder
+        grounder = GeminiGrounder(cfg.grounding, keys["GEMINI_API_KEY"],
+                                  log_dir=Path(cfg.logging.dir) / "grounding")
 
     controller = ArmController(bus, cfg)
     controller.start()
@@ -100,7 +120,7 @@ def build_app(cfg: Config, *, text: bool, offline: bool, tts: bool = True) -> Ap
         chat = GroqChat(cfg.chat, keys["GROQ_API_KEY"])
 
     agent: TaskAgent
-    if offline or cfg.mode == "mock":
+    if offline or cfg.mode in ("mock", "sim"):
         # TODO(step 5): use GeminiAgent here too once it exists.
         agent = ScriptedAgent(list(cfg.locations))
     else:
@@ -110,7 +130,7 @@ def build_app(cfg: Config, *, text: bool, offline: bool, tts: bool = True) -> Ap
     ctx = SkillContext(
         cfg=cfg, controller=controller, camera=camera, tof=tof, grounder=grounder,
         scene=scene, say=speaker.say, ask_user=lambda q: None,
-        pixel_to_table=proj.to_table if proj else None,   # hardware: TODO calibration
+        pixel_to_table=pixel_to_table,
         sim_world=sim_world,
     )
     runner = TaskRunner(agent, build_registry(), ctx, cfg.agent, cfg.logging.dir)
@@ -119,7 +139,7 @@ def build_app(cfg: Config, *, text: bool, offline: bool, tts: bool = True) -> Ap
         voice: VoiceInput = TextInput()
     else:
         voice = MicInput(cfg.voice, keys["GROQ_API_KEY"] or "")
-    return App(cfg, controller, camera, speaker, chat, runner, scene, voice)
+    return App(cfg, controller, camera, speaker, chat, runner, scene, voice, sim=world)
 
 
 def handle_utterance(app: App, text: str) -> None:
@@ -187,17 +207,27 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--text", action="store_true", help="type instead of using the microphone")
     p.add_argument("--offline", action="store_true", help="no cloud APIs: offline chat + scripted agent")
     p.add_argument("--hardware", action="store_true", help="use the real servo bus (overrides mode)")
+    p.add_argument("--sim", action="store_true", help="MuJoCo SO-101 simulator (overrides mode)")
+    p.add_argument("--viewer", action="store_true",
+                   help="with --sim: live 3D window (macOS: start with `mjpython -m jarvis_arm ...`)")
+    p.add_argument("--gemini-vision", action="store_true",
+                   help="use Gemini Robotics-ER for grounding (default in hardware mode; sim/mock use ground truth)")
     p.add_argument("--no-tts", action="store_true", help="print replies only")
     p.add_argument("-v", "--verbose", action="store_true")
     a = p.parse_args(argv)
 
     load_dotenv()
     cfg = load_config(a.config)
+    if a.hardware and a.sim:
+        p.error("--hardware and --sim are mutually exclusive")
     if a.hardware:
         cfg.mode = "hardware"
+    elif a.sim:
+        cfg.mode = "sim"
     setup_logging(cfg, a.verbose)
 
-    app = build_app(cfg, text=a.text, offline=a.offline, tts=not a.no_tts)
+    app = build_app(cfg, text=a.text, offline=a.offline, tts=not a.no_tts,
+                    gemini_vision=a.gemini_vision, viewer=a.viewer)
     try:
         run(app)
     except KeyboardInterrupt:
@@ -206,6 +236,8 @@ def main(argv: list[str] | None = None) -> int:
         app.runner.cancel("shutdown")
         app.controller.shutdown()
         app.camera.stop()
+        if app.sim is not None:
+            app.sim.stop()
     return 0
 
 
